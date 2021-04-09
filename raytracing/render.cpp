@@ -53,7 +53,7 @@ bool scene_intersect(const Vector &orig, const Vector &dir, const std::vector<Sp
         }
     }
 
-    float checkerboard_dist = std::numeric_limits<float>::max();
+    /*float checkerboard_dist = std::numeric_limits<float>::max();
     if (fabs(dir.y)>1e-3)  {
         float d = -(orig.y+4)/dir.y; // the checkerboard plane has equation y = -4, d - коэффициент
         Vector pt = orig + dir*d;
@@ -64,7 +64,7 @@ bool scene_intersect(const Vector &orig, const Vector &dir, const std::vector<Sp
             material.diffuse_color = (int(.5*hit.x+1000) + int(.5*hit.z)) & 1 ? Vector(1,1,1) : Vector(1, .7, .3);
             material.diffuse_color = material.diffuse_color*.3;
         }
-    }
+    }*/
     return dist<1000;
 }
 
@@ -88,6 +88,11 @@ Vector refract(const Vector &I, const Vector &N, float refractive_index) //norma
     return I*eta + n*(eta * cosi - sqrtf(k));
 }
 
+Vector multiply(const Vector & vec1, const Vector & vec2)
+{
+    return Vector(vec1.x*vec2.x, vec1.y*vec2.y, vec1.z*vec2.z);
+}
+
 Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere> &spheres, std::vector<Light> lights, const std::vector<Triangle> triangles, 
     const Dodekaedr & dodekaedr, size_t depth=0) 
 {
@@ -109,8 +114,10 @@ Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere>
 
     Vector point1, N1;
     Material material1;
-    float diffuse_light_intensity = 0.5, specular_light_intensity = 0;
-    for (size_t i=0; i<lights.size(); i++) {
+    Vector diffuse(0,0,0), specular(0,0,0);
+    Vector ambient = Light::ambient;
+    for (size_t i=0; i<lights.size(); i++) 
+    {
         Vector light_dir      = (lights[i].position - point).normalize();
 
         float light_distance = (lights[i].position - point).norm();
@@ -119,12 +126,12 @@ Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere>
             && fabs((point1 - lights[i].position).norm() - light_distance)>0.001)
             continue;
 
-        diffuse_light_intensity  += lights[i].intensity * std::max(0.f, light_dir*N);
-        specular_light_intensity += powf(std::max(0.f, reflect(light_dir, N)*dir), material.specular_exponent)*lights[i].intensity;
+        diffuse  = diffuse + multiply(lights[i].diffuse, material.diffuse * std::max(0.f, light_dir*N));
+        specular = specular + multiply(lights[i].specular, 
+            material.specular * powf(std::max(0.f, reflect(light_dir, N)*dir), material.shininess*128));
     }
-    return material.diffuse_color * diffuse_light_intensity * material.albedo.x + 
-        Vector(1., 1., 1.)*specular_light_intensity * material.albedo.y + reflect_color*material.albedo.z 
-        + refract_color*material.albedo.d;
+    return multiply(ambient, material.ambient) + diffuse + specular + 
+        reflect_color*material.reflect + refract_color*material.refract;
 }
 
 //начало координат в верхнем левом угле
@@ -167,13 +174,16 @@ void render(const std::vector<Sphere> & spheres, const std::vector<Light> lights
 }
 
 int main() {
-    Material      ivory(1.0, Vector4D(0.6,  0.3, 0.1, 0.0), Vector(0.4, 0.4, 0.3),   256.);
-    Material      glass(1.5, Vector4D(0.0,  0.5, 0.1, 0.8), Vector(0.6, 0.7, 0.8),  125.);
+    Material gold(1.0, Vector(0.24275, 0.1995, 0.0745), Vector(0.75164, 0.60648, 0.22648), Vector(0.628281, 0.555802, 0.366065), 0.4,
+        0.3, 0.0);
+
+    Material      brown(1.0, Vector(1.0f, 0.5f, 0.31f), Vector(1.0f, 0.5f, 0.31f),   Vector(0.5f, 0.5f, 0.5f), 0.25, 0, 0);
+    /*Material      glass(1.5, Vector4D(0.0,  0.5, 0.1, 0.8), Vector(0.6, 0.7, 0.8),  125.);
     Material red_rubber(1.0, Vector4D(0.9,  0.1, 0.0, 0.0), Vector(0.3, 0.1, 0.1),   10.);
-    Material     mirror(1.0, Vector4D(0.0, 10.0, 0.8, 0.0), Vector(1.0, 1.0, 1.0), 1425.);
+    Material     mirror(1.0, Vector4D(0.0, 10.0, 0.8, 0.0), Vector(1.0, 1.0, 1.0), 1425.);*/
 
     std::vector<Sphere> spheres;
-    //spheres.push_back(Sphere(Vector(-5,    0,   -8), 2,      ivory));
+    //spheres.push_back(Sphere(Vector(5,    0,   -15), 2, brown));
     //spheres.push_back(Sphere(Vector(-2.0, -2, -12), 1,      glass));
     //spheres.push_back(Sphere(Vector( 1.5, -0.5, -18), 3, red_rubber));
     //spheres.push_back(Sphere(Vector( 7,    5,   -18), 4,     mirror));
@@ -209,10 +219,9 @@ int main() {
     };
 
     for (int i=0;i<20;i++)
-        vert_list[i].z -= 10;
-
-    for (int i=0;i<20;i++)
-        vert_list[i].y -= 2;
+    {
+        vert_list[i].z -= 5;
+    }
 
     int * triag_list = new int[108]{
     1, 2, 3,
@@ -253,12 +262,12 @@ int main() {
     13, 20, 19
     };
 
-    Dodekaedr dodekaedr(vert_list, triag_list, Vector(0,-1,-10), ivory);
+    Dodekaedr dodekaedr(vert_list, triag_list, Vector(0,-1,-10), gold);
 
     std::vector<Light>  lights;
-    lights.push_back(Light(Vector(-20, 20,  20), 1.5));
-    lights.push_back(Light(Vector( 30, 50, -25), 1.8));
-    lights.push_back(Light(Vector( 30, 20,  30), 1.7));
+    lights.push_back(Light(Vector(-20, 20,  20), Vector(0.5, 0.5, 0.5), Vector(1.0, 1.0, 1.0)));
+    //lights.push_back(Light(Vector( 30, 50, -25), 1.8));
+    //lights.push_back(Light(Vector( 30, 20,  30), 1.7));
     //lights.push_back(Light(Vector( -20, -5,  30), 1.7));
 
     render(spheres, lights, triangles, dodekaedr);
