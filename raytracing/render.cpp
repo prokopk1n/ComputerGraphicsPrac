@@ -195,6 +195,78 @@ int main() {
     //pentagons.push_back(Pentagon(red_rubber, Vector(-1, -1.63, -5), Vector(1.36, -1.63, -5), 
         //Vector(2.09, 0.62, -5), Vector(0.18, 2.01, -5), Vector(-1.73, 0.62, -5)));
 
+    /*Vector * vert_list = new Vector[20]{
+    Vector(0.469, 0.469, 0.469),
+    Vector(0.290, 0.000, 0.759),
+    Vector(-0.759, -0.290, 0.000),
+    Vector(0.759, 0.290, 0.000),
+    Vector(-0.469, 0.469, -0.469),
+    Vector(0.000, -0.759, -0.290),
+    Vector(-0.759, 0.290, 0.000),
+    Vector(0.469, -0.469, 0.469),
+    Vector(-0.469, 0.469, 0.469),
+    Vector(-0.469, -0.469, 0.469),
+    Vector(0.469, -0.469, -0.469),
+    Vector(0.290, 0.000, -0.759),
+    Vector(-0.469, -0.469, -0.469),
+    Vector(0.000, -0.759, 0.290),
+    Vector(0.000, 0.759, -0.290),
+    Vector(-0.290, 0.000, 0.759),
+    Vector(0.759, -0.290, 0.000),
+    Vector(-0.290, 0.000, -0.759),
+    Vector(0.469, 0.469, -0.469),
+    Vector(0.000, 0.759, 0.290)
+    };
+
+    for (int i=0;i<20;i++)
+    {
+        vert_list[i].z -= 5;
+    }
+
+    int * triag_list = new int[108]{
+    9, 13, 7,
+    7, 1, 15,
+    6, 4, 14,
+    14, 19, 8,
+    12, 5, 13,
+    13, 9, 2,
+    6, 2, 12,
+    12, 17, 4,
+    16, 10, 11,
+    11, 18, 3,
+    19, 8, 15,
+    15, 1, 0,
+    16, 7, 1,
+    1, 0, 3,
+    5, 12, 17,
+    17, 11, 10,
+    18, 14, 4,
+    4, 17, 11,
+    16, 10, 5,
+    5, 13, 7,
+    2, 6, 8,
+    8, 15, 9,
+    19, 0, 3,
+    3, 18, 14,
+    9, 7, 15,
+    6, 14, 8,
+    12, 13, 9,
+    6, 12, 4,
+    16, 11, 3,
+    19, 15, 0,
+    16, 1, 3,
+    5, 17, 10,
+    18, 4, 11,
+    16, 5, 7,
+    2, 8, 9,
+    19, 3, 14
+    };
+
+    for (int i=0;i<20;i++)
+    {
+        vert_list[i].z -= 2;
+    }*/
+
     Vector * vert_list = new Vector[20]{
     Vector(0.5, -1.30901694297790528, 0),
     Vector(0.80901700258255008, -0.80901700258255008, 0.80901700258255008),
@@ -217,11 +289,6 @@ int main() {
     Vector(-1.30901694297790528, 0, 0.5),
     Vector(-0.80901700258255008, 0.80901700258255008, 0.80901700258255008)
     };
-
-    for (int i=0;i<20;i++)
-    {
-        vert_list[i].z -= 5;
-    }
 
     int * triag_list = new int[108]{
     1, 2, 3,
@@ -262,7 +329,43 @@ int main() {
     13, 20, 19
     };
 
-    Dodekaedr dodekaedr(vert_list, triag_list, Vector(0,-1,-10), gold);
+    float MatrixY[3][3];
+    float alpha = M_PI;
+    MatrixY[0][0] = cos(alpha);
+    MatrixY[0][1] = 0;
+    MatrixY[0][2] = sin(alpha);
+    MatrixY[1][0] = 0;
+    MatrixY[1][1] = 1;
+    MatrixY[1][2] = 0;
+    MatrixY[2][0] = -sin(alpha);
+    MatrixY[2][1] = 0;
+    MatrixY[2][2] = cos(alpha);
+
+    float MatrixX[3][3];
+    float beta = M_PI/6;
+    MatrixX[0][0] = 1;
+    MatrixX[0][1] = 0;
+    MatrixX[0][2] = 0;
+    MatrixX[1][0] = 0;
+    MatrixX[1][1] = cos(beta);
+    MatrixX[1][2] = -sin(beta);
+    MatrixX[2][0] = 0;
+    MatrixX[2][1] = sin(beta);
+    MatrixX[2][2] = cos(beta);
+
+    for (int i=0;i<20;i++)
+    {
+        std::cout<<vert_list[i].x<<" "<<vert_list[i].y<<" "<<vert_list[i].z<<std::endl;
+        vert_list[i] = vert_list[i].matrix(MatrixX).matrix(MatrixY);
+        std::cout<<vert_list[i].x<<" "<<vert_list[i].y<<" "<<vert_list[i].z<<std::endl;
+    }
+
+    for (int i=0;i<20;i++)
+    {
+        vert_list[i].z -= 5;
+    }
+
+    Dodekaedr dodekaedr(vert_list, triag_list, Vector(0,0,-5), gold);
 
     std::vector<Light>  lights;
     lights.push_back(Light(Vector(-20, 20,  20), Vector(0.5, 0.5, 0.5), Vector(1.0, 1.0, 1.0)));
