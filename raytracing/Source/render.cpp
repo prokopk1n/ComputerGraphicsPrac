@@ -11,9 +11,13 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../Lib/stb_image_write.h"
 
+const float Scale = 2.0;
 const double POWER = 3.0;
 const double Bailout = 2.0;
 const int Iterations = 15;
+const int MAX_DEPTH = 2;
+const float REFLECT_COEFF = 0.8;
+double MinimumDistance = 0.001;
 
 const int WIDTH = 1024, HEIGHT = 1024;
 
@@ -65,7 +69,7 @@ bool scene_intersect(const Vector &orig, const Vector &dir, const std::vector<Sp
     {
         dist_i = -(orig.y+4)/dir.y; // the checkerboard plane has equation y = -4
         Vector pt = orig + dir*dist_i;
-        if (dist_i>0 && fabs(pt.x)<10 && pt.z<0 && pt.z>-30 && dist_i<dist) {
+        if (dist_i>0 && fabs(pt.x)<10 && pt.z<5 && pt.z>-30 && dist_i<dist) {
             dist = dist_i;
             hit = pt;
             N = Vector(0,1,0);
@@ -76,16 +80,12 @@ bool scene_intersect(const Vector &orig, const Vector &dir, const std::vector<Sp
                 material.specular = Vector(0.70, 0.70, 0.70);
                 material.refractive_index = 1;
                 material.shininess = 0.25;
+                material.type = kDiffuse;
             }
             else 
             {
-                Material cyan_plastic(1.0, Vector(0.0, 0.1, 0.06), Vector(0.0, 0.50980392, 0.50980392), Vector(0.50196078, 0.50196078, 0.50196078), 0.25);
+                Material cyan_plastic(1.0, Vector(0.0, 0.1, 0.06), Vector(0.0, 0.50980392, 0.50980392), Vector(0.50196078, 0.50196078, 0.50196078), 0.25, kDiffuse);
                 material = cyan_plastic;
-                /*material.diffuse = Vector(0.01, 0.01, 0.01);
-                material.ambient = Vector(0,0,0);
-                material.specular = Vector(0.50, 0.50, 0.50);
-                material.refractive_index = 1;
-                material.shininess = 0.25;*/
             }
         }
     }
@@ -100,26 +100,34 @@ Vector reflect(const Vector &I, const Vector &N) // отраженный луч
 
 Vector refract(const Vector &I, const Vector &N, float refractive_index) //normalize преломленный луч
 {
-    float cosi = I*N*(-1);
+    float cosi = I*N;
     float etai = 1, etat = refractive_index;
     Vector n = N;
     if (cosi < 0) 
     { // if the ray is inside the object, swap the indices and invert the normal to get the correct result
         cosi = -cosi;
+    }
+    else 
+    {
         std::swap(etai, etat); 
         n = N*(-1);
     }
     float eta = etai / etat;
     float k = 1 - eta*eta*(1 - cosi*cosi);//cos угла преломления
-    return I*eta + n*(eta * cosi - sqrtf(k));
+    return k<0 ? 0 : I*eta + n*(eta * cosi - sqrtf(k));
 }
 
-float fresnel(const Vector &I, const Vector &N, float refractive_index) 
+float fresnel(const Vector &_I, const Vector &_N, float refractive_index) 
 { 
     float kr;
+    Vector I = _I.normalize();
+    Vector N = _N.normalize();
     float cosi = I * N; 
     float etai = 1, etat = refractive_index; 
-    if (cosi > 0) { std::swap(etai, etat); } 
+    if (cosi > 0) 
+    { 
+        std::swap(etai, etat); 
+    } 
     // Compute sini using Snell's law
     float sint = etai / etat * sqrtf(std::max(0.f, 1 - cosi * cosi)); 
     // Total internal reflection
@@ -139,6 +147,94 @@ float fresnel(const Vector &I, const Vector &N, float refractive_index)
     // kt = 1 - kr;
 } 
 
+float DE1(Vector z)
+{
+    /*Vector a2 = Vector(1,1,1);
+	Vector a1 = Vector(-1,-1,1);
+	Vector a3 = Vector(1,-1,-1);
+	Vector a4 = Vector(-1,1,-1);*/
+    /*Vector a1 = Vector(1,1,1);
+	Vector a2 = Vector(-1,1,-1);
+	Vector a3 = Vector(-1,-1,1);
+	Vector a4 = Vector(1,1,-1);*/
+    Vector a1 = Vector(0,-0.25,1);
+	Vector a2 = Vector(1,-0.25,0);
+	Vector a3 = Vector(0,0.75,0);
+	Vector a4 = Vector(-1,-0.25,0);
+
+	Vector c;
+	int n = 0;
+	float dist, d;
+	while (n < Iterations) {
+		c = a1; 
+        dist = (z-a1).norm();
+	    d = (z-a2).norm(); 
+        if (d < dist) 
+        { 
+            c = a2; 
+            dist=d; 
+        }
+		d = (z-a3).norm(); 
+        if (d < dist) 
+        { 
+            c = a3; 
+            dist=d; 
+        }
+		d = (z-a4).norm(); 
+        if (d < dist) 
+        { 
+            c = a4; 
+            dist=d; 
+        }
+		z = z*Scale-c*(Scale-1.0);
+		n++;
+	}
+
+	return z.norm() * pow(Scale, float(-n));
+}
+
+Vector getNormal(const Vector & p, float eps = EPS) 
+{
+	Vector n;
+	n.x = DE1(p + Vector(eps, 0.0, 0.0)) - DE1(p - Vector(eps, 0.0, 0.0));
+	n.y = DE1(p + Vector(0.0, eps, 0.0)) - DE1(p - Vector(0.0, eps, 0.0));
+	n.z = DE1(p + Vector(0.0, 0.0, eps)) - DE1(p - Vector(0.0, 0.0, eps));
+	return n.normalize();
+}
+
+bool new_cast_ray(const Vector & orig, const Vector & dir, Vector & point, Vector & N, Material & material, float & dist)
+{
+    int MaximumRaySteps = 100;
+    float totalDistance = 0.0;
+	int steps;
+	for (steps=0; steps < MaximumRaySteps; steps++) 
+    {
+		Vector p = orig + dir * totalDistance;
+		//float distance = DE_sphere(p, center, R);
+        float distance = DE1(p);
+        //std::cout<<distance<<std::endl;
+		totalDistance += distance;
+        if (totalDistance >= 1000)
+        {
+            //std::cout<<"HERE\n";
+            return false;
+        }
+		if (distance < MinimumDistance) 
+            break;
+	}
+
+    //std::cout<<"HERE\n";
+    if (steps == MaximumRaySteps)
+        false;
+    
+    material = Material(1.0, Vector(0.24275, 0.1995, 0.0745), Vector(0.75164, 0.60648, 0.22648), Vector(0.628281, 0.555802, 0.366065), 0.4, kDiffuse); 
+    point = orig + dir * totalDistance;
+    dist = totalDistance;
+    N = getNormal(point);
+    return totalDistance < 1000;
+
+}
+
 Vector multiply(const Vector & vec1, const Vector & vec2)
 {
     return Vector(vec1.x*vec2.x, vec1.y*vec2.y, vec1.z*vec2.z);
@@ -149,7 +245,7 @@ Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere>
 {
     Vector point, N;
     Material material;
-    if (depth>4 || !scene_intersect(orig, dir, spheres, figures, cylinder, point, N, material)) 
+    if (depth>MAX_DEPTH || !scene_intersect(orig, dir, spheres, figures, cylinder, point, N, material)) 
     {
         //return Vector(0, 0, 0);
         return Vector(0.2, 0.7, 0.8); // background color
@@ -163,13 +259,24 @@ Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere>
      // offset the original point to avoid occlusion by the object itself
     
     Vector reflect_color(0,0,0);
-    float reflect_coeff = fresnel(dir, N, material.refractive_index);
-    if (reflect_coeff >= EPS)
-        reflect_color = cast_ray(reflect_orig, reflect_dir, spheres, lights, figures, cylinder,  depth + 1);
+    float reflect_coeff = 0;
     Vector refract_color(0,0,0);
-    float refract_coeff = 1 - reflect_coeff;
-    if (reflect_coeff>=EPS)
-        refract_color = cast_ray(refract_orig, refract_dir, spheres, lights, figures,cylinder, depth + 1);
+    float refract_coeff = 0;
+
+    switch (material.type)
+    {
+        case kReflection:
+            reflect_color = cast_ray(reflect_orig, reflect_dir, spheres, lights, figures, cylinder,  depth + 1) * REFLECT_COEFF;
+        break;
+        case kReflectionAndRefraction:
+            reflect_coeff = fresnel(dir, N, material.refractive_index);
+            reflect_color = cast_ray(reflect_orig, reflect_dir, spheres, lights, figures, cylinder,  depth + 1) * reflect_coeff;
+            if (reflect_coeff < 1)
+            {
+                refract_color = cast_ray(refract_orig, refract_dir, spheres, lights, figures,cylinder, depth + 1)*(1-reflect_coeff);
+            }
+        break; 
+    }
 
     Vector point1, N1;
     Material material1;
@@ -194,7 +301,7 @@ Vector cast_ray(const Vector &orig, const Vector &dir, const std::vector<Sphere>
     }
 
     return multiply(ambient, material.ambient) + diffuse + specular + 
-        reflect_color*reflect_coeff + refract_color*refract_coeff;
+        reflect_color + refract_color;
 }
 
 Vector cast_ray1(const Vector &orig, const Vector &dir);
@@ -216,8 +323,8 @@ void render(const std::vector<Sphere> & spheres, const std::vector<Light> lights
             float x =  (2*(i + 0.5)/(float)width  - 1)*tan(fov/2.);
             float y = -(2*(j + 0.5)/(float)height - 1)*tan(fov/2.);
             Vector dir = Vector(x, y, -1).normalize();
-            //Vector buf = cast_ray(Vector(0,0,0), dir, spheres, lights, figures, cylinder);
-            Vector buf = cast_ray1(Vector(0,0,0), dir);
+            Vector buf = cast_ray(Vector(0,0,0), dir, spheres, lights, figures, cylinder);
+            //Vector buf = cast_ray1(Vector(0,0,0), dir);
             Vector &c = buf;
             float max = std::max(buf.x, std::max(buf.y, buf.z));
             if (max>1)
@@ -240,105 +347,6 @@ void render(const std::vector<Sphere> & spheres, const std::vector<Light> lights
     stbi_write_png("./out.png", width, height, 3, image, width*3);
 }
 
-float DE1(Vector z)
-{
-	Vector a1 = Vector(1,1,1);
-	Vector a2 = Vector(-1,-1,1);
-	Vector a3 = Vector(1,-1,-1);
-	Vector a4 = Vector(-1,1,-1);
-	Vector c;
-	int n = 0;
-	float dist, d;
-	while (n < Iterations) {
-		c = a1; 
-        dist = (z-a1).norm();
-	    d = (z-a2).norm(); 
-        if (d < dist) 
-        { 
-            c = a2; dist=d; 
-        }
-		d = (z-a3).norm(); 
-        if (d < dist) 
-        { 
-            c = a3; dist=d; 
-        }
-		d = (z-a4).norm(); 
-        if (d < dist) 
-        { 
-            c = a4; dist=d; 
-        }
-		z = z*POWER-c*(POWER-1.0);
-		n++;
-	}
-
-	return z.norm() * pow(POWER, float(-n));
-}
-
-float DE(Vector pos) {
-	Vector z = pos;
-	float dr = 1.0;
-	float r = 0.0;
-	for (int i = 0; i < Iterations ; i++) {
-		r = z.norm();
-		if (r>Bailout) break;
-		
-		// convert to polar coordinates
-		float theta = acos(z.z/r);
-		float phi = atan2(z.y,z.x);
-		dr =  pow( r, POWER-1.0)*POWER*dr + 1.0;
-		
-		// scale and rotate the point
-		float zr = pow( r,POWER);
-		theta = theta*POWER;
-		phi = phi*POWER;
-		
-		// convert back to cartesian coordinates
-		z = Vector(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta))*zr;
-		z = z + pos;
-	}
-	return 0.5*log(r)*r/dr;
-}
-
-Vector getNormal(const Vector & ray_pos) 
-{
-    Vector surf_normal;
-    Vector epsilon_x = Vector(EPS, 0, 0);
-    Vector epsilon_y = Vector(0, EPS, 0);
-    Vector epsilon_z = Vector(0, 0, EPS);
-
-    Vector ray_perb_x1 = ray_pos + epsilon_x;
-    Vector ray_perb_y1 = ray_pos + epsilon_y;
-    Vector ray_perb_z1 = ray_pos + epsilon_z;
-
-    Vector ray_perb_x2 = ray_pos - epsilon_x ;
-    Vector ray_perb_y2 = ray_pos - epsilon_y;
-    Vector ray_perb_z2 = ray_pos - epsilon_z;
-
-    surf_normal.x = DE(ray_perb_x1) - DE(ray_perb_x2);
-    surf_normal.y = DE(ray_perb_y1) - DE(ray_perb_y2);
-    surf_normal.z = DE(ray_perb_z1) - DE(ray_perb_z2);
-    return surf_normal.normalize();
-}
-
-double MinimumDistance = 0.001;
-
-Vector cast_ray1(const Vector &orig, const Vector &dir)
-{
-    int MaximumRaySteps = 20;
-    float totalDistance = 0.0;
-	int steps;
-	for (steps=0; steps < MaximumRaySteps; steps++) 
-    {
-		Vector p = orig + dir * totalDistance;
-		float distance = DE1(p);
-		totalDistance += distance;
-		if (distance < MinimumDistance) break;
-	}
-    float result = 1.0-float(steps)/float(MaximumRaySteps);
-	return Vector(result, result, result);
-}
-
-
 void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::vector<Object> & figures, Cylinder & cylinder);
 
 int main() {
@@ -349,21 +357,22 @@ int main() {
 
     prepare(spheres, lights, figures, cylinder);
     render (spheres, lights, figures, cylinder);
+    std::cout<<"READY\n";
     return 0;
 }
 
 void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::vector<Object> & figures, Cylinder & cylinder)
 {
-    Material gold(1.0, Vector(0.24275, 0.1995, 0.0745), Vector(0.75164, 0.60648, 0.22648), Vector(0.628281, 0.555802, 0.366065), 0.4);
-    Material cyan_plastic(1.0, Vector(0.0, 0.1, 0.06), Vector(0.0, 0.50980392, 0.50980392), Vector(0.50196078, 0.50196078, 0.50196078), 0.25);
-    Material glass(1.5, Vector(0, 0, 0), Vector(0.0, 0.0, 0.0), Vector(1.0, 1.0, 1.0), 0.75);
-    Material brown(1.0, Vector(1.0f, 0.5f, 0.31f), Vector(1.0f, 0.5f, 0.31f),   Vector(0.5f, 0.5f, 0.5f), 0.25);
+    Material gold(1.0, Vector(0.24275, 0.1995, 0.0745), Vector(0.75164, 0.60648, 0.22648), Vector(0.628281, 0.555802, 0.366065), 0.4, kReflection);
+    Material cyan_plastic(1.0, Vector(0.0, 0.1, 0.06), Vector(0.0, 0.50980392, 0.50980392), Vector(0.50196078, 0.50196078, 0.50196078), 0.25, kDiffuse);
+    Material glass(1.5, Vector(0, 0, 0), Vector(0.0, 0.0, 0.0), Vector(1.0, 1.0, 1.0), 0.75, kReflectionAndRefraction);
+    Material brown(1.0, Vector(1.0f, 0.5f, 0.31f), Vector(1.0f, 0.5f, 0.31f),   Vector(0.5f, 0.5f, 0.5f), 0.25, kDiffuse);
     /*Material      glass(1.5, Vector4D(0.0,  0.5, 0.1, 0.8), Vector(0.6, 0.7, 0.8),  125.);
     Material red_rubber(1.0, Vector4D(0.9,  0.1, 0.0, 0.0), Vector(0.3, 0.1, 0.1),   10.);
     Material     mirror(1.0, Vector4D(0.0, 10.0, 0.8, 0.0), Vector(1.0, 1.0, 1.0), 1425.);*/
 
-    //spheres.push_back(Sphere(Vector(0,    0,   -15), 2, brown));
-    spheres.push_back(Sphere(Vector( 0, 0, -4), 0.5, glass));
+    //spheres.push_back(Sphere(Vector(0,    0,   -5), 1, glass));
+    //spheres.push_back(Sphere(Vector( 0, 0, -4), 0.5, glass));
     //spheres.push_back(Sphere(Vector( 1.5, -0.5, -18), 3, red_rubber));
     //spheres.push_back(Sphere(Vector( 7,    5,   -18), 4,     mirror));
 
@@ -433,7 +442,7 @@ void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::ve
     };
 
     float MatrixY[3][3];
-    float alpha = M_PI;
+    float alpha = -M_PI/3.2;
     MatrixY[0][0] = cos(alpha);
     MatrixY[0][1] = 0;
     MatrixY[0][2] = sin(alpha);
@@ -463,7 +472,7 @@ void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::ve
 
     for (int i=0;i<20;i++)
     {
-        vert_list[i].z -= 50;
+        vert_list[i].z -= 5;
         vert_list[i].y -= 0.5;
     }
 
@@ -485,6 +494,21 @@ void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::ve
         cube_vert[i].y -= 0.5;
     }
 
+    alpha = M_PI/4;
+    MatrixY[0][0] = cos(alpha);
+    MatrixY[0][1] = 0;
+    MatrixY[0][2] = sin(alpha);
+    MatrixY[1][0] = 0;
+    MatrixY[1][1] = 1;
+    MatrixY[1][2] = 0;
+    MatrixY[2][0] = -sin(alpha);
+    MatrixY[2][1] = 0;
+    MatrixY[2][2] = cos(alpha);
+    for (int i=0;i<8;i++)
+    {
+        cube_vert[i] = cube_vert[i].matrix(MatrixY);
+    }
+
     int * my_triag_list = new int[36]{
         1,2,3,
         1,3,4,
@@ -502,15 +526,15 @@ void prepare(std::vector<Sphere> & spheres, std::vector<Light> & lights, std::ve
 
     for (int i=0;i<8;i++)
     {
-        cube_vert[i].z -= 15;
-        cube_vert[i].y += 3;
-        cube_vert[i].x -= 3;
+        cube_vert[i].z -= 7;
+        cube_vert[i].y -= 2;
+        //cube_vert[i].x -= 3;
     }
 
     cylinder = Cylinder(Vector(0, -1.75, -40.0), -2.0, -1.5, 1, 1, brown);
 
-    figures.push_back(Object(vert_list, triag_list, 108, Vector(0,-0.75,-50.0), glass));
-    figures.push_back(Object(cube_vert, my_triag_list, 36, Vector(-3,3,-10), gold));
+    figures.push_back(Object(vert_list, triag_list, 108, Vector(0,-0.75,-5), glass));
+    //figures.push_back(Object(cube_vert, my_triag_list, 36, Vector(0,-2,-7), glass));
 
 
     lights.push_back(Light(Vector(-10, 10,  -5), Vector(0.5, 0.5, 0.5), Vector(1.0, 1.0, 1.0)));
